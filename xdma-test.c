@@ -8,6 +8,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/mman.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
@@ -18,7 +19,6 @@ struct __attribute__ ((__packed__)) aspeed_xdma_op {
 	uint8_t upstream;
 	uint64_t host_addr;
 	uint32_t len;
-	uint32_t bmc_addr;
 };
 #endif /* TESTING */
 
@@ -46,6 +46,20 @@ static const uint8_t _default_pattern[DEFAULT_PATTERN_LENGTH] = {
 	0xcd,
 	0xef
 };
+
+static const char *_help =
+	"xdma-test performs DMA operations between the BMC and the host.\n"
+	"Usage: xdma-test [options]\n"
+	"Options:\n"
+	"    -a --addr <host address>    specify the host memory address\n"
+	"    -d --data <data>            specify the data pattern for upstream"
+					 " ops\n"
+	"    -p --pattern                pattern the memory before upstream "
+					 "op\n"
+	"    -r --read <length>          do a read (downstream) op of <length>"
+					 " bytes\n"
+	"    -w --write <length>         do a write (upstream) op of <length> "
+					 "bytes\n";
 
 void arg_to_data(char *arg, unsigned long size, uint8_t *buf)
 {
@@ -102,38 +116,66 @@ int arg_to_u64(char *arg, uint64_t *val)
 	return 0;
 }
 
-void do_pattern(int fd, uint32_t data_length, unsigned int pattern_length, const uint8_t *data)
+void do_pattern(uint8_t *vga_mem, uint32_t data_length,
+		unsigned int pattern_length, const uint8_t *data)
 {
-	int len;
-	int rc;
-	unsigned int i;
+	char free_tmp = 0;
+	uint8_t *tmp;
 
 	if (!data) {
 		data = _default_pattern;
 		pattern_length = DEFAULT_PATTERN_LENGTH;
-		log_info("Patterning with default pattern.\n");
 	}
 
-	for (i = 0; i < data_length; i += pattern_length) {
-		if (data_length < i + pattern_length)
-			len = data_length - i;
-		else
-			len = pattern_length;
-		
-		if ((rc = write(fd, data, len)) < 0) {
-			log_err("Failed to write pattern: %s.\n", strerror(errno));
-			break;
+	/*
+	 * Pattern a temporary buffer and then copy the whole buffer to VGA. In
+	 * testing, copying small chunks at a time resulted in cache coherency
+	 * issues.
+	 */
+	if (pattern_length < data_length) {
+		int len;
+		unsigned int i;
+
+		free_tmp = 1;
+		tmp = malloc(data_length);
+
+		if (!tmp) {
+			log_err("Failed to allocate memory for patterning.\n");
+			return;
 		}
+
+		for (i = 0; i < data_length; i += pattern_length) {
+			if (data_length < i + pattern_length)
+				len = data_length - i;
+			else
+				len = pattern_length;
+
+			memcpy(&tmp[i], data, len);
+		}
+	} else {
+		tmp = (uint8_t *)data;
 	}
+
+	memcpy(vga_mem, tmp, data_length);
+
+	if (free_tmp)
+		free(tmp);
 }
 
-void read_and_display(int fd, uint32_t data_length)
+void read_and_display(uint8_t *vga_mem, uint32_t data_length)
 {
 	int len;
-	int rc;
 	unsigned int i;
 	unsigned int j;
 	uint8_t data[DISPLAY_BYTES_PER_LINE];
+	uint8_t *tmp = malloc(data_length);
+
+	if (!tmp) {
+		log_err("Failed to allocate memory to display data.\n");
+		return;
+	}
+
+	memcpy(tmp, vga_mem, data_length);
 
 	for (i = 0; i < data_length; i += DISPLAY_BYTES_PER_LINE) {
 		if (data_length < i + DISPLAY_BYTES_PER_LINE)
@@ -141,16 +183,15 @@ void read_and_display(int fd, uint32_t data_length)
 		else
 			len = DISPLAY_BYTES_PER_LINE;
 
-		if ((rc = read(fd, data, len)) < 0) {
-			log_err("Failed to read buffer: %s\n", strerror(errno));
-			break;
-		}
+		memcpy(data, &tmp[i], len);
 
 		for (j = 0; j < len; ++j)
 			fprintf(stdout, "%02X ", data[j]);
 
 		fprintf(stdout, "\n");
 	}
+
+	free(tmp);
 }
 
 int main(int argc, char **argv)
@@ -159,7 +200,6 @@ int main(int argc, char **argv)
 	char do_read = 1;
 	char pattern = 0;
 	int fd = -1;
-	int fd_buf = -1;
 	int option;
 	int rc;
 	unsigned int pattern_length = DEFAULT_PATTERN_LENGTH;
@@ -167,16 +207,16 @@ int main(int argc, char **argv)
 	uint64_t host_addr;
 	uint32_t len;
 	uint8_t *data_buf = NULL;
+	uint8_t *vga_mem = NULL;
 	char *data_arg = NULL;
 	const char *xdma_dev = "/dev/xdma";
-	const char *xdma_buf_dev = "/dev/xdma-buf";
 	const char *opts = "a:d:hpr:w:";
 	struct aspeed_xdma_op xdma_op;
 	struct option lopts[] = {
 		{ "addr", 1, 0, 'a' },
 		{ "data", 1, 0, 'd' },
 		{ "help", 0, 0, 'h' },
-		{ "pattern", 1, 0, 'p' },
+		{ "pattern", 0, 0, 'p' },
 		{ "read", 1, 0, 'r' },
 		{ "write", 1, 0, 'w' },
 		{ 0, 0, 0, 0 }
@@ -190,7 +230,8 @@ int main(int argc, char **argv)
 			break;
 		case 'd':
 			if (data_arg) {
-				log_err("Can't accept multiple data arguments, aborting.\n");
+				log_err("Can't accept multiple data arguments,"
+					" aborting.\n");
 				rc = -EINVAL;
 				goto done;
 			}
@@ -205,14 +246,16 @@ int main(int argc, char **argv)
 			strcpy(data_arg, optarg);
 			break;
 		case 'h':
-
+			printf("%s", _help);
+			goto done;
 			break;
 		case 'p':
 			pattern = 1;
 			break;
 		case 'r':
 			if (op) {
-				log_err("Can't accept multiple commands, aborting.\n");
+				log_err("Can't accept multiple commands,"
+					" aborting.\n");
 				rc = -EINVAL;
 				goto done;
 			}
@@ -221,7 +264,8 @@ int main(int argc, char **argv)
 				goto done;
 
 			if (!len) {
-				log_err("Zero length read specified, aborting.\n");
+				log_err("Zero length read specified,"
+					" aborting.\n");
 				rc = -EINVAL;
 				goto done;
 			}
@@ -230,7 +274,8 @@ int main(int argc, char **argv)
 			break;
 		case 'w':
 			if (op) {
-				log_err("Can't accept multiple commands, aborting.\n");
+				log_err("Can't accept multiple commands,"
+					" aborting.\n");
 				rc = -EINVAL;
 				goto done;
 			}
@@ -239,7 +284,8 @@ int main(int argc, char **argv)
 				goto done;
 
 			if (!len) {
-				log_err("Zero length write specified, aborting.\n");
+				log_err("Zero length write specified,"
+					" aborting.\n");
 				rc = -EINVAL;
 				goto done;
 			}
@@ -266,21 +312,6 @@ int main(int argc, char **argv)
 		arg_to_data(data_arg, len, data_buf);
 	}
 
-	fd_buf = open(xdma_buf_dev, do_read ? O_RDONLY : O_WRONLY);
-	if (fd_buf < 0) {
-		log_err("Failed to open %s.\n", xdma_buf_dev);
-		rc = -ENODEV;
-		goto done;
-	}
-
-	if (pattern && !do_read)
-		do_pattern(fd_buf, len, pattern_length, data_buf);
-
-	xdma_op.upstream = do_read ? 0 : 1;
-	xdma_op.host_addr = host_addr;
-	xdma_op.len = len;
-	xdma_op.bmc_addr = 0;
-
 	fd = open(xdma_dev, O_RDWR);
 	if (fd < 0) {
 		log_err("Failed to open %s.\n", xdma_dev);
@@ -288,28 +319,44 @@ int main(int argc, char **argv)
 		goto done;
 	}
 
-	errno = 0;
+	vga_mem = mmap(NULL, len, do_read ? PROT_READ : PROT_WRITE, MAP_SHARED,
+		       fd, 0);
+	if (!vga_mem) {
+		log_err("Failed to mmap %s.\n", strerror(errno));
+		rc = -ENOMEM;
+		goto done;
+	}
+
+	if (pattern && !do_read)
+		do_pattern(vga_mem, len, pattern_length / 2, data_buf);
+
+	xdma_op.upstream = do_read ? 0 : 1;
+	xdma_op.host_addr = host_addr;
+	xdma_op.len = len;
+
 	rc = write(fd, &xdma_op, sizeof(xdma_op));
 	if (rc < 0) {
-		log_err("Failed to start DMA operation: %s.\n", strerror(errno));
+		log_err("Failed to start DMA operation: %s.\n",
+			strerror(errno));
 		goto done;
 	}
 
 	rc = read(fd, &res, 1);
 	if (rc < 0) {
-		log_err("Failed to complete DMA operation: %s.\n", strerror(errno));
+		log_err("Failed to complete DMA operation: %s.\n",
+			strerror(errno));
 		goto done;
 	}
 
 	if (do_read)
-		read_and_display(fd_buf, len);
+		read_and_display(vga_mem, len);
 
 done:
+	if (vga_mem)
+		munmap(vga_mem, len);
+
 	if (fd >= 0)
 		close(fd);
-
-	if (fd_buf >= 0)
-		close(fd_buf);
 
 	if (data_arg)
 		free(data_arg);
