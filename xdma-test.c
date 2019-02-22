@@ -4,6 +4,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <getopt.h>
+#include <poll.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -212,6 +213,7 @@ int main(int argc, char **argv)
 	const char *xdma_dev = "/dev/xdma";
 	const char *opts = "a:d:hpr:w:";
 	struct aspeed_xdma_op xdma_op;
+	struct pollfd fds;
 	struct option lopts[] = {
 		{ "addr", 1, 0, 'a' },
 		{ "data", 1, 0, 'd' },
@@ -341,7 +343,9 @@ int main(int argc, char **argv)
 		goto done;
 	}
 
-	rc = read(fd, &res, 1);
+	fds.fd = fd;
+	fds.events = POLLIN;
+	rc = poll(&fds, 1, -1);
 	if (rc < 0) {
 		log_err("Failed to complete DMA operation: %s.\n",
 			strerror(errno));
