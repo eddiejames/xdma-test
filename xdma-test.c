@@ -62,6 +62,18 @@ static const char *_help =
 	"    -w --write <length>         do a write (upstream) op of <length> "
 					 "bytes\n";
 
+uint32_t align_length(uint32_t len)
+{
+	const int page_size = getpagesize();
+	uint32_t num_pages = len / page_size;
+	uint32_t aligned_len = num_pages * page_size;
+
+	if (len > aligned_len)
+		aligned_len += page_size;
+
+	return aligned_len;
+}
+
 void arg_to_data(char *arg, unsigned long size, uint8_t *buf)
 {
 	char c;
@@ -206,6 +218,7 @@ int main(int argc, char **argv)
 	unsigned int pattern_length = DEFAULT_PATTERN_LENGTH;
 	uint8_t res;
 	uint64_t host_addr;
+	uint32_t aligned_len;
 	uint32_t len;
 	uint8_t *data_buf = NULL;
 	uint8_t *vga_mem = NULL;
@@ -304,8 +317,10 @@ int main(int argc, char **argv)
 		goto done;
 	}
 
+	aligned_len = align_length(len);
+
 	if (data_arg) {
-		data_buf = malloc(len);
+		data_buf = malloc(aligned_len);
 		if (!data_buf) {
 			rc = -ENOMEM;
 			goto done;
@@ -321,7 +336,7 @@ int main(int argc, char **argv)
 		goto done;
 	}
 
-	vga_mem = mmap(NULL, len, do_read ? PROT_READ : PROT_WRITE, MAP_SHARED,
+	vga_mem = mmap(NULL, aligned_len, do_read ? PROT_READ : PROT_WRITE, MAP_SHARED,
 		       fd, 0);
 	if (!vga_mem) {
 		log_err("Failed to mmap %s.\n", strerror(errno));
@@ -329,8 +344,11 @@ int main(int argc, char **argv)
 		goto done;
 	}
 
-	if (pattern && !do_read)
-		do_pattern(vga_mem, len, pattern_length / 2, data_buf);
+	if (pattern && !do_read) {
+		do_pattern(vga_mem, aligned_len, pattern_length / 2, data_buf);
+		munmap(vga_mem, aligned_len);
+		vga_mem = NULL;
+	}
 
 	xdma_op.upstream = do_read ? 0 : 1;
 	xdma_op.host_addr = host_addr;
@@ -357,7 +375,7 @@ int main(int argc, char **argv)
 
 done:
 	if (vga_mem)
-		munmap(vga_mem, len);
+		munmap(vga_mem, aligned_len);
 
 	if (fd >= 0)
 		close(fd);
