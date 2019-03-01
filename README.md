@@ -36,8 +36,17 @@ insmod ast-bmc-pcie.ko
 Finally, check dmesg for the host address to use with xdma-test, usually
 0x60000000.
 
-### 4) use xdma-test
+### 4) Use xdma-test
 
 ```
 xdma-test -a <host address> -p -w 4096
+```
+
+### 5) Verify
+
+The host driver provides a device file to check the target memory space to
+verify that the transfer went through.
+
+```
+dd if=/dev/ast-bmc-mem of=/tmp/vga bs=1024 count=4; cat /tmp/vga | hexdump -C
 ```
