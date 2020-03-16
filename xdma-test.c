@@ -17,9 +17,9 @@
 #define TESTING
 #ifdef TESTING
 struct __attribute__ ((__packed__)) aspeed_xdma_op {
-	uint8_t upstream;
 	uint64_t host_addr;
 	uint32_t len;
+	uint32_t upstream;
 };
 #endif /* TESTING */
 
@@ -223,7 +223,7 @@ int main(int argc, char **argv)
 	uint8_t *data_buf = NULL;
 	uint8_t *vga_mem = NULL;
 	char *data_arg = NULL;
-	const char *xdma_dev = "/dev/xdma";
+	const char *xdma_dev = "/dev/aspeed-xdma";
 	const char *opts = "a:d:hpr:w:";
 	struct aspeed_xdma_op xdma_op;
 	struct pollfd fds;
@@ -346,8 +346,6 @@ int main(int argc, char **argv)
 
 	if (pattern && !do_read) {
 		do_pattern(vga_mem, aligned_len, pattern_length / 2, data_buf);
-		munmap(vga_mem, aligned_len);
-		vga_mem = NULL;
 	}
 
 	xdma_op.upstream = do_read ? 0 : 1;
