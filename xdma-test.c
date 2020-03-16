@@ -17,9 +17,9 @@
 #define TESTING
 #ifdef TESTING
 struct __attribute__ ((__packed__)) aspeed_xdma_op {
-	uint8_t upstream;
 	uint64_t host_addr;
 	uint32_t len;
+	uint32_t upstream;
 };
 #endif /* TESTING */
 
