@@ -346,8 +346,6 @@ int main(int argc, char **argv)
 
 	if (pattern && !do_read) {
 		do_pattern(vga_mem, aligned_len, pattern_length / 2, data_buf);
-		munmap(vga_mem, aligned_len);
-		vga_mem = NULL;
 	}
 
 	xdma_op.upstream = do_read ? 0 : 1;
