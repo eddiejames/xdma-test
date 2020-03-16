@@ -223,7 +223,7 @@ int main(int argc, char **argv)
 	uint8_t *data_buf = NULL;
 	uint8_t *vga_mem = NULL;
 	char *data_arg = NULL;
-	const char *xdma_dev = "/dev/xdma";
+	const char *xdma_dev = "/dev/aspeed-xdma";
 	const char *opts = "a:d:hpr:w:";
 	struct aspeed_xdma_op xdma_op;
 	struct pollfd fds;
