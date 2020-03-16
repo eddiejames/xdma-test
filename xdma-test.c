@@ -14,6 +14,11 @@
 #include <sys/types.h>
 #include <unistd.h>
 
+#include <stdbool.h>
+
+#include <sys/ioctl.h>
+#include <linux/types.h>
+
 #define TESTING
 #ifdef TESTING
 struct __attribute__ ((__packed__)) aspeed_xdma_op {
@@ -21,6 +26,10 @@ struct __attribute__ ((__packed__)) aspeed_xdma_op {
 	uint32_t len;
 	uint32_t upstream;
 };
+
+#define __ASPEED_XDMA_IOCTL_MAGIC       0xb7
+#define ASPEED_XDMA_IOCTL_RESET         _IO(__ASPEED_XDMA_IOCTL_MAGIC, 0)
+
 #endif /* TESTING */
 
 #define DEFAULT_PATTERN_LENGTH	16
@@ -212,6 +221,7 @@ int main(int argc, char **argv)
 	char op = 0;
 	char do_read = 1;
 	char pattern = 0;
+	bool reset = false;
 	int fd = -1;
 	int option;
 	int rc;
@@ -224,7 +234,7 @@ int main(int argc, char **argv)
 	uint8_t *vga_mem = NULL;
 	char *data_arg = NULL;
 	const char *xdma_dev = "/dev/aspeed-xdma";
-	const char *opts = "a:d:hpr:w:";
+	const char *opts = "a:d:hpr:w:R";
 	struct aspeed_xdma_op xdma_op;
 	struct pollfd fds;
 	struct option lopts[] = {
@@ -234,6 +244,7 @@ int main(int argc, char **argv)
 		{ "pattern", 0, 0, 'p' },
 		{ "read", 1, 0, 'r' },
 		{ "write", 1, 0, 'w' },
+		{ "reset", no_argument, 0, 'R' },
 		{ 0, 0, 0, 0 }
 	};
 
@@ -266,6 +277,9 @@ int main(int argc, char **argv)
 			break;
 		case 'p':
 			pattern = 1;
+			break;
+		case 'R':
+			reset = true;
 			break;
 		case 'r':
 			if (op) {
@@ -311,7 +325,7 @@ int main(int argc, char **argv)
 		}
 	}
 
-	if (!op) {
+	if (!op && !reset) {
 		log_err("No operation specified, aborting.\n");
 		rc = -EINVAL;
 		goto done;
@@ -333,6 +347,14 @@ int main(int argc, char **argv)
 	if (fd < 0) {
 		log_err("Failed to open %s.\n", xdma_dev);
 		rc = -ENODEV;
+		goto done;
+	}
+
+	if (reset) {
+		printf("Performing reset...\n");
+		rc = ioctl(fd, ASPEED_XDMA_IOCTL_RESET);
+		if (rc)
+			log_err("Failed to reset: %s\n", strerror(errno));
 		goto done;
 	}
 
