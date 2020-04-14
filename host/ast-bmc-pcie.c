@@ -6,12 +6,13 @@
 #include <linux/module.h>
 #include <linux/pci.h>
 #include <linux/pci-dma-compat.h>
+#include <linux/uaccess.h>
 
 #define DRIVER_NAME			"ast-bmc"
 #define BUF_SIZE			16777216
 
 #define PCI_VENDOR_ID_ASPEED		0x1a03
-#define PCI_DEVICE_ID_AST2500_VGA	0x2000
+#define PCI_DEVICE_ID_AST2500_VGA	0x2402
 
 struct ast_bmc_addr {
 	dma_addr_t dma;
