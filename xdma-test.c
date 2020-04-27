@@ -66,10 +66,15 @@ static const char *_help =
 					 " ops\n"
 	"    -p --pattern                pattern the memory before upstream "
 					 "op\n"
-	"    -r --read <length>          do a read (downstream) op of <length>"
-					 " bytes\n"
-	"    -w --write <length>         do a write (upstream) op of <length> "
-					 "bytes\n";
+	"    -f --file                   File to read/write to\n"
+	"    -r --read                   do a read (downstream) op of <length>"
+					 " bytes. If the file parameter is "
+                                         "specified, will place data in file arg\n"
+	"    -w --write                  do a write (upstream) op of <length> "
+					 "bytes. If the file arg is specified"
+                                         " will write file contents to memory. "
+                                         " Uses len of file and size\n"
+	"    -s --size                   size in bytes of opeartion\n";
 
 uint32_t align_length(uint32_t len)
 {
@@ -223,27 +228,32 @@ int main(int argc, char **argv)
 	char pattern = 0;
 	bool reset = false;
 	int fd = -1;
+        int bin_fd = -1;
 	int option;
 	int rc;
 	unsigned int pattern_length = DEFAULT_PATTERN_LENGTH;
+	size_t fname_length = 0;
 	uint8_t res;
 	uint64_t host_addr;
 	uint32_t aligned_len;
-	uint32_t len;
+	uint32_t len =0;
 	uint8_t *data_buf = NULL;
 	uint8_t *vga_mem = NULL;
 	char *data_arg = NULL;
 	const char *xdma_dev = "/dev/aspeed-xdma";
-	const char *opts = "a:d:hpr:w:R";
+        char *fname = NULL;
+	const char *opts = "a:d:hf:prwRs:";
 	struct aspeed_xdma_op xdma_op;
 	struct pollfd fds;
 	struct option lopts[] = {
 		{ "addr", 1, 0, 'a' },
 		{ "data", 1, 0, 'd' },
 		{ "help", 0, 0, 'h' },
+		{ "file", 1, 0, 'f' },
 		{ "pattern", 0, 0, 'p' },
-		{ "read", 1, 0, 'r' },
-		{ "write", 1, 0, 'w' },
+		{ "size", 1, 0, 's' },
+		{ "read", no_argument, 0, 'r' },
+		{ "write", no_argument, 0, 'w' },
 		{ "reset", no_argument, 0, 'R' },
 		{ 0, 0, 0, 0 }
 	};
@@ -271,6 +281,16 @@ int main(int argc, char **argv)
 
 			strcpy(data_arg, optarg);
 			break;
+                 case 'f':
+			fname_length = strlen(optarg);
+			fname = malloc(fname_length + 1);
+			if (!fname) {
+				rc = -ENOMEM;
+				goto done;
+			}
+
+			strcpy(fname, optarg);
+			break;
 		case 'h':
 			printf("%s", _help);
 			goto done;
@@ -289,16 +309,6 @@ int main(int argc, char **argv)
 				goto done;
 			}
 
-			if ((rc = arg_to_u32(optarg, &len)))
-				goto done;
-
-			if (!len) {
-				log_err("Zero length read specified,"
-					" aborting.\n");
-				rc = -EINVAL;
-				goto done;
-			}
-
 			op = 1;
 			break;
 		case 'w':
@@ -309,18 +319,12 @@ int main(int argc, char **argv)
 				goto done;
 			}
 
-			if ((rc = arg_to_u32(optarg, &len)))
-				goto done;
-
-			if (!len) {
-				log_err("Zero length write specified,"
-					" aborting.\n");
-				rc = -EINVAL;
-				goto done;
-			}
-
 			op = 1;
 			do_read = 0;
+			break;
+		case 's':
+			if ((rc = arg_to_u32(optarg, &len)))
+				goto done;
 			break;
 		}
 	}
@@ -331,17 +335,6 @@ int main(int argc, char **argv)
 		goto done;
 	}
 
-	aligned_len = align_length(len);
-
-	if (data_arg) {
-		data_buf = malloc(aligned_len);
-		if (!data_buf) {
-			rc = -ENOMEM;
-			goto done;
-		}
-
-		arg_to_data(data_arg, len, data_buf);
-	}
 
 	fd = open(xdma_dev, O_RDWR);
 	if (fd < 0) {
@@ -358,6 +351,71 @@ int main(int argc, char **argv)
 		goto done;
 	}
 
+        // See if we are reading/writing to a file
+        if(fname)
+        {
+            bin_fd = open(fname, do_read ? O_RDWR | O_CREAT | O_TRUNC : O_RDONLY, (mode_t)0600 );
+            if (bin_fd < 0) {
+		log_err("Failed to open %s.\n", fname);
+		rc = -ENODEV;
+		goto done;
+            }
+
+            //If a read seek to create the file size for mem map to cpy
+            //Else write, use the bin file size as the length
+            if(do_read){
+                if (0 > (rc = lseek(bin_fd, len-1 , SEEK_SET))){
+                    log_err("Failed[%s] to seek %d on %s\n", strerror(errno), len, fname);
+                    goto done;
+                }
+                if ((rc = write(bin_fd, "", 1)) !=1){
+                    log_err("Failed[%s] to put char on %s\n",strerror(errno), fname);
+                    goto done;
+                }
+            } else {
+                struct stat fbin_stats;
+                rc = fstat(bin_fd, &fbin_stats);
+                if(rc) {
+                    log_err("fstat failed on %s, %s\n", fname, strerror(errno));
+                    goto done;
+                }
+                len = fbin_stats.st_size;            
+            }
+            log_info("Doing %s of %s to/from 0x%llx for size %d\n",
+                     do_read ? "read" : "write", fname, host_addr, len);
+
+	}
+
+        if (!len) {
+            log_err("Zero length op specified,"
+                    " aborting.\n");
+            rc = -EINVAL;
+            goto done;
+        }
+
+
+	aligned_len = align_length(len);
+
+	if (data_arg) {
+		data_buf = malloc(aligned_len);
+		if (!data_buf) {
+			rc = -ENOMEM;
+			goto done;
+		}
+
+		arg_to_data(data_arg, len, data_buf);
+        } else if(fname) {  // See if we are reading/writing to a file
+            data_buf = mmap(NULL, aligned_len, do_read ? PROT_READ | PROT_WRITE : PROT_READ, MAP_SHARED,
+                           bin_fd, 0);
+            if (!data_buf) {
+                log_err("Failed to mmap %s.\n", strerror(errno));
+                rc = -ENOMEM;
+                goto done;
+            }
+
+        }
+
+
 	vga_mem = mmap(NULL, aligned_len, do_read ? PROT_READ : PROT_WRITE, MAP_SHARED,
 		       fd, 0);
 	if (!vga_mem) {
@@ -366,8 +424,12 @@ int main(int argc, char **argv)
 		goto done;
 	}
 
-	if (pattern && !do_read) {
+       	if (!do_read) {
+            if(fname){
+                memcpy(vga_mem, data_buf, len);
+            }else if (pattern) {
 		do_pattern(vga_mem, aligned_len, pattern_length / 2, data_buf);
+            }
 	}
 
 	xdma_op.upstream = do_read ? 0 : 1;
@@ -390,9 +452,14 @@ int main(int argc, char **argv)
 		goto done;
 	}
 
-	if (do_read)
+        if (do_read) {
+            if(fname){
+                memcpy(data_buf, vga_mem, len);
+                msync(data_buf, len, MS_SYNC);
+            }else {
 		read_and_display(vga_mem, len);
-
+            }
+        }
 done:
 	if (vga_mem)
 		munmap(vga_mem, aligned_len);
@@ -400,11 +467,18 @@ done:
 	if (fd >= 0)
 		close(fd);
 
+	if (data_buf)
+            if(fname)
+                munmap(data_buf, aligned_len);
+            else    
+		free(data_buf);
+
+	if (bin_fd >= 0)
+		close(bin_fd);
+
 	if (data_arg)
 		free(data_arg);
 
-	if (data_buf)
-		free(data_buf);
 
 	return rc;
 }
