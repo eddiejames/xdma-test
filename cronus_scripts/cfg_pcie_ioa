@@ -1,0 +1,47 @@
+chipPos="-p0"
+phbPos="-c2"
+
+  echo "  ASPEED Technology, Inc. AST1150 PCI-to-PCI Bridge (rev 05)"
+  cfg_cycle $chipPos $phbPos -b1 -d0 -f0 04 00100147 -quiet
+  cfg_cycle $chipPos $phbPos -b1 -d0 -f0 04 -quiet
+  cfg_cycle $chipPos $phbPos -b1 -d0 -f0 18 00020201 -quiet
+  cfg_cycle $chipPos $phbPos -b1 -d0 -f0 18 -quiet
+  cfg_cycle $chipPos $phbPos -b1 -d0 -f0 1c 022001F1 -quiet
+  cfg_cycle $chipPos $phbPos -b1 -d0 -f0 1c -quiet
+  cfg_cycle $chipPos $phbPos -b1 -d0 -f0 20 FFE08000 -quiet
+  cfg_cycle $chipPos $phbPos -b1 -d0 -f0 20 -quiet
+  cfg_cycle $chipPos $phbPos -b1 -d0 -f0 24 0001FFF1 -quiet
+  cfg_cycle $chipPos $phbPos -b1 -d0 -f0 24 -quiet
+  cfg_cycle $chipPos $phbPos -b1 -d0 -f0 3C 00020100 -quiet
+  cfg_cycle $chipPos $phbPos -b1 -d0 -f0 3C -quiet
+  cfg_cycle $chipPos $phbPos -b1 -d0 -f0 88 00102950 -quiet
+  cfg_cycle $chipPos $phbPos -b1 -d0 -f0 88 -quiet
+  cfg_cycle $chipPos $phbPos -b1 -d0 -f0 A8 00000010 -quiet
+  cfg_cycle $chipPos $phbPos -b1 -d0 -f0 A8 -quiet
+  echo""
+  echo "VGA compatible controller: ASPEED Technology, Inc. ASPEED Graphics Family (rev 51)"
+  cfg_cycle $chipPos $phbPos -b2 -d0 -f0 04 02100147 -quiet
+  cfg_cycle $chipPos $phbPos -b2 -d0 -f0 04 -quiet
+  cfg_cycle $chipPos $phbPos -b2 -d0 -f0 08 03000051 -quiet
+  cfg_cycle $chipPos $phbPos -b2 -d0 -f0 08 -quiet
+  cfg_cycle $chipPos $phbPos -b2 -d0 -f0 10 84000000 -quiet
+  cfg_cycle $chipPos $phbPos -b2 -d0 -f0 10 -quiet
+  cfg_cycle $chipPos $phbPos -b2 -d0 -f0 14 84800000 -quiet
+  cfg_cycle $chipPos $phbPos -b2 -d0 -f0 14 -quiet
+  cfg_cycle $chipPos $phbPos -b2 -d0 -f0 1c 84880000 -quiet
+  cfg_cycle $chipPos $phbPos -b2 -d0 -f0 1c -quiet
+  echo "	Region 0: Memory at 600c104000000 (32-bit, non-prefetchable) [size=8M]"
+  echo "        Region 1: Memory at 600c104800000 (32-bit, non-prefetchable) [size=256K]"
+  echo "        Region 3: Memory at 600c104880000 (32-bit, non-prefetchable) [size=4K]"
+  echo ""
+  echo "  PBMC interface: ASPEED Technology, Inc. Device 2402"
+  cfg_cycle $chipPos $phbPos -b2 -d1 -f0 04 02100147 -quiet
+  cfg_cycle $chipPos $phbPos -b2 -d1 -f0 04 -quiet
+  cfg_cycle $chipPos $phbPos -b2 -d1 -f0 08 FF000001 -quiet
+  cfg_cycle $chipPos $phbPos -b2 -d1 -f0 08 -quiet
+  cfg_cycle $chipPos $phbPos -b2 -d1 -f0 10 80000000 -quiet
+  cfg_cycle $chipPos $phbPos -b2 -d1 -f0 10 -quiet
+  cfg_cycle $chipPos $phbPos -b2 -d1 -f0 14 84840000 -quiet
+  cfg_cycle $chipPos $phbPos -b2 -d1 -f0 14 -quiet
+  echo "	Region 0: Memory at 600c100000000 (32-bit, non-prefetchable) [size=64M]"
+  echo "	Region 1: Memory at 600c104840000 (32-bit, non-prefetchable) [size=256K]"
