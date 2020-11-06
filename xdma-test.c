@@ -233,14 +233,16 @@ int main(int argc, char **argv)
 	uint8_t *data_buf = NULL;
 	uint8_t *vga_mem = NULL;
 	char *data_arg = NULL;
+	char *out_arg = NULL;
 	const char *xdma_dev = "/dev/aspeed-xdma";
-	const char *opts = "a:d:hpr:w:R";
+	const char *opts = "a:d:ho:pr:w:R";
 	struct aspeed_xdma_op xdma_op;
 	struct pollfd fds;
 	struct option lopts[] = {
 		{ "addr", 1, 0, 'a' },
 		{ "data", 1, 0, 'd' },
 		{ "help", 0, 0, 'h' },
+		{ "out", 1, 0, 'o' },
 		{ "pattern", 0, 0, 'p' },
 		{ "read", 1, 0, 'r' },
 		{ "write", 1, 0, 'w' },
@@ -274,6 +276,22 @@ int main(int argc, char **argv)
 		case 'h':
 			printf("%s", _help);
 			goto done;
+			break;
+		case 'o':
+			if (out_arg) {
+				log_err("Can't accept multiple out arguments,"
+					" aborting.\n");
+				rc = -EINVAL;
+				goto done;
+			}
+
+			out_arg = malloc(strlen(optarg) + 1);
+			if (!out_arg) {
+				rc = -ENOMEM;
+				goto done;
+			}
+
+			strcpy(out_arg, optarg);
 			break;
 		case 'p':
 			pattern = 1;
@@ -358,8 +376,8 @@ int main(int argc, char **argv)
 		goto done;
 	}
 
-	vga_mem = mmap(NULL, aligned_len, do_read ? PROT_READ : PROT_WRITE, MAP_SHARED,
-		       fd, 0);
+	vga_mem = mmap(NULL, aligned_len, do_read ? PROT_READ : PROT_WRITE,
+		       MAP_SHARED, fd, 0);
 	if (!vga_mem) {
 		log_err("Failed to mmap %s.\n", strerror(errno));
 		rc = -ENOMEM;
@@ -390,8 +408,28 @@ int main(int argc, char **argv)
 		goto done;
 	}
 
-	if (do_read)
+	if (do_read) {
+		if (out_arg) {
+			int ofd = open(out_arg, O_WRONLY | O_CREAT,
+				       S_IWUSR | S_IRUSR);
+
+			if (ofd < 0) {
+				log_info("Failed to open out argument %s.\n",
+					 out_arg);
+			} else {
+				rc = write(ofd, vga_mem, len);
+				if (rc >= 0) {
+					close(ofd);
+					goto done;
+				} else {
+					log_info("Failed to write results to "
+						 "%s.\n", out_arg);
+				}
+			}
+		}
+
 		read_and_display(vga_mem, len);
+	}
 
 done:
 	if (vga_mem)
@@ -399,6 +437,9 @@ done:
 
 	if (fd >= 0)
 		close(fd);
+
+	if (out_arg)
+		free(out_arg);
 
 	if (data_arg)
 		free(data_arg);
