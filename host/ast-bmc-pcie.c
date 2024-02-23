@@ -5,14 +5,13 @@
 #include <linux/miscdevice.h>
 #include <linux/module.h>
 #include <linux/pci.h>
-#include <linux/pci-dma-compat.h>
 #include <linux/uaccess.h>
 
 #define DRIVER_NAME			"ast-bmc"
 #define BUF_SIZE			16777216
 
 #define PCI_VENDOR_ID_ASPEED		0x1a03
-#define PCI_DEVICE_ID_AST2500_VGA	0x2402
+#define PCI_DEVICE_ID_AST2500_VGA	0x2000
 
 struct ast_bmc_addr {
 	dma_addr_t dma;
@@ -106,9 +105,9 @@ static int ast_bmc_pci_probe(struct pci_dev *pdev,
 
 	pci_set_master(pdev);
 
-	pci_set_dma_mask(pdev, DMA_BIT_MASK(32));
+	dma_set_mask(&pdev->dev, DMA_BIT_MASK(32));
 
-	pci_set_consistent_dma_mask(pdev, DMA_BIT_MASK(32));
+	dma_set_coherent_mask(&pdev->dev, DMA_BIT_MASK(32));
 
 	ctx->mem.virt = dma_alloc_coherent(&pdev->dev, BUF_SIZE,
 					   &ctx->mem.dma, GFP_KERNEL);
