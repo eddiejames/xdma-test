@@ -16,7 +16,9 @@ cd host/
 make -C <path to kernel source> M=$PWD
 ```
 
-### 3) Probe driver
+### 3) Make sure to enable VGA device on BMC
+
+### 4) Probe driver
 
 If the existing ast graphics driver is running on the host (check for 'ast'
 with lsmod) it must first be removed.
@@ -36,13 +38,15 @@ insmod ast-bmc-pcie.ko
 Finally, check dmesg for the host address to use with xdma-test, usually
 0x60000000.
 
-### 4) Use xdma-test
+### 5) Use xdma-test
 
+Compile the xdma-test under openbmc sdk and copy it to the BMC node.
+Run the test on BMC node.
 ```
-xdma-test -a <host address> -p -w 4096
+xdma-test -a <host address> -p -w -s 4096
 ```
 
-### 5) Verify
+### 6) Verify
 
 The host driver provides a device file to check the target memory space to
 verify that the transfer went through.
