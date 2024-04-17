@@ -226,6 +226,7 @@ int main(int argc, char **argv)
 	char op = 0;
 	char do_read = 1;
 	char pattern = 0;
+	char clear = 0;
 	bool reset = false;
 	int fd = -1;
         int bin_fd = -1;
@@ -242,11 +243,12 @@ int main(int argc, char **argv)
 	char *data_arg = NULL;
 	const char *xdma_dev = "/dev/aspeed-xdma";
         char *fname = NULL;
-	const char *opts = "a:d:hf:prwRs:";
+	const char *opts = "a:cd:hf:prwRs:";
 	struct aspeed_xdma_op xdma_op;
 	struct pollfd fds;
 	struct option lopts[] = {
 		{ "addr", 1, 0, 'a' },
+		{ "clear", no_argument, 0, 'c' },
 		{ "data", 1, 0, 'd' },
 		{ "help", 0, 0, 'h' },
 		{ "file", 1, 0, 'f' },
@@ -263,6 +265,9 @@ int main(int argc, char **argv)
 		case 'a':
 			if ((rc = arg_to_u64(optarg, &host_addr)))
 				goto done;
+			break;
+		case 'c':
+			clear = 1;
 			break;
 		case 'd':
 			if (data_arg) {
@@ -416,7 +421,7 @@ int main(int argc, char **argv)
         }
 
 
-	vga_mem = mmap(NULL, aligned_len, do_read ? PROT_READ : PROT_WRITE, MAP_SHARED,
+	vga_mem = mmap(NULL, aligned_len, PROT_READ | PROT_WRITE, MAP_SHARED,
 		       fd, 0);
 	if (!vga_mem) {
 		log_err("Failed to mmap %s.\n", strerror(errno));
@@ -430,6 +435,12 @@ int main(int argc, char **argv)
             }else if (pattern) {
 		do_pattern(vga_mem, aligned_len, pattern_length / 2, data_buf);
             }
+	} else if (clear) {
+		char *tmp = malloc(aligned_len);
+
+		memset(tmp, 0, aligned_len);
+		memcpy(vga_mem, tmp, aligned_len);
+		free(tmp);
 	}
 
 	xdma_op.upstream = do_read ? 0 : 1;
