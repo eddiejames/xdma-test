@@ -12,6 +12,7 @@
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <time.h>
 #include <unistd.h>
 
 #include <stdbool.h>
@@ -74,7 +75,8 @@ static const char *_help =
 					 "bytes. If the file arg is specified"
                                          " will write file contents to memory. "
                                          " Uses len of file and size\n"
-	"    -s --size                   size in bytes of opeartion\n";
+	"    -s --size                   size in bytes of opeartion\n"
+	"    -X --corruption <loops>     test for corruption\n";
 
 uint32_t align_length(uint32_t len)
 {
@@ -189,12 +191,28 @@ void do_pattern(uint8_t *vga_mem, uint32_t data_length,
 		free(tmp);
 }
 
+void display(unsigned char *data, unsigned int len, unsigned int i)
+{
+	unsigned int ll;
+	unsigned int j;
+
+	for (; i < len; i += DISPLAY_BYTES_PER_LINE) {
+		if (len < i + DISPLAY_BYTES_PER_LINE)
+			ll = len - i;
+		else
+			ll = DISPLAY_BYTES_PER_LINE;
+
+		for (j = 0; j < ll; ++j) {
+			if (j == (ll - 1))
+				fprintf(stdout, "%02X\n", data[i + j]);
+			else
+				fprintf(stdout, "%02X ", data[i + j]);
+		}
+	}
+}
+
 void read_and_display(uint8_t *vga_mem, uint32_t data_length)
 {
-	int len;
-	unsigned int i;
-	unsigned int j;
-	uint8_t data[DISPLAY_BYTES_PER_LINE];
 	uint8_t *tmp = malloc(data_length);
 
 	if (!tmp) {
@@ -204,19 +222,7 @@ void read_and_display(uint8_t *vga_mem, uint32_t data_length)
 
 	memcpy(tmp, vga_mem, data_length);
 
-	for (i = 0; i < data_length; i += DISPLAY_BYTES_PER_LINE) {
-		if (data_length < i + DISPLAY_BYTES_PER_LINE)
-			len = data_length - i;
-		else
-			len = DISPLAY_BYTES_PER_LINE;
-
-		memcpy(data, &tmp[i], len);
-
-		for (j = 0; j < len; ++j)
-			fprintf(stdout, "%02X ", data[j]);
-
-		fprintf(stdout, "\n");
-	}
+	display(tmp, data_length, 0);
 
 	free(tmp);
 }
@@ -227,9 +233,10 @@ int main(int argc, char **argv)
 	char do_read = 1;
 	char pattern = 0;
 	char clear = 0;
+	char first_corruption_loop = 0;
 	bool reset = false;
 	int fd = -1;
-        int bin_fd = -1;
+	int bin_fd = -1;
 	int option;
 	int rc;
 	unsigned int pattern_length = DEFAULT_PATTERN_LENGTH;
@@ -237,13 +244,18 @@ int main(int argc, char **argv)
 	uint8_t res;
 	uint64_t host_addr;
 	uint32_t aligned_len;
-	uint32_t len =0;
+	uint32_t corruption = 0;
+	uint32_t cl = 0;
+	uint32_t len = 0;
 	uint8_t *data_buf = NULL;
 	uint8_t *vga_mem = NULL;
 	char *data_arg = NULL;
 	const char *xdma_dev = "/dev/aspeed-xdma";
-        char *fname = NULL;
-	const char *opts = "a:cd:hf:prwRs:";
+	char *fname = NULL;
+	char *corruption_buffer = NULL;
+	char *corruption_clear = NULL;
+	char *corruption_compare = NULL;
+	const char *opts = "a:cd:hf:prwRXs:";
 	struct aspeed_xdma_op xdma_op;
 	struct pollfd fds;
 	struct option lopts[] = {
@@ -257,6 +269,7 @@ int main(int argc, char **argv)
 		{ "read", no_argument, 0, 'r' },
 		{ "write", no_argument, 0, 'w' },
 		{ "reset", no_argument, 0, 'R' },
+		{ "corruption", 1, 0, 'X' },
 		{ 0, 0, 0, 0 }
 	};
 
@@ -286,7 +299,7 @@ int main(int argc, char **argv)
 
 			strcpy(data_arg, optarg);
 			break;
-                 case 'f':
+		case 'f':
 			fname_length = strlen(optarg);
 			fname = malloc(fname_length + 1);
 			if (!fname) {
@@ -331,6 +344,16 @@ int main(int argc, char **argv)
 			if ((rc = arg_to_u32(optarg, &len)))
 				goto done;
 			break;
+		case 'X':
+			if ((rc = arg_to_u32(optarg, &corruption)))
+				goto done;
+
+			if (corruption) {
+				first_corruption_loop = 1;
+				op = 1;
+				do_read = 0;
+			}
+			break;
 		}
 	}
 
@@ -356,48 +379,54 @@ int main(int argc, char **argv)
 		goto done;
 	}
 
-        // See if we are reading/writing to a file
-        if(fname)
-        {
-            bin_fd = open(fname, do_read ? O_RDWR | O_CREAT | O_TRUNC : O_RDONLY, (mode_t)0600 );
-            if (bin_fd < 0) {
-		log_err("Failed to open %s.\n", fname);
-		rc = -ENODEV;
-		goto done;
-            }
+	if (corruption) {
+		if (fname) {
+			free(fname);
+			fname = NULL;
+		}
 
-            //If a read seek to create the file size for mem map to cpy
-            //Else write, use the bin file size as the length
-            if(do_read){
-                if (0 > (rc = lseek(bin_fd, len-1 , SEEK_SET))){
-                    log_err("Failed[%s] to seek %d on %s\n", strerror(errno), len, fname);
-                    goto done;
-                }
-                if ((rc = write(bin_fd, "", 1)) !=1){
-                    log_err("Failed[%s] to put char on %s\n",strerror(errno), fname);
-                    goto done;
-                }
-            } else {
-                struct stat fbin_stats;
-                rc = fstat(bin_fd, &fbin_stats);
-                if(rc) {
-                    log_err("fstat failed on %s, %s\n", fname, strerror(errno));
-                    goto done;
-                }
-                len = fbin_stats.st_size;            
-            }
-            log_info("Doing %s of %s to/from 0x%llx for size %d\n",
-                     do_read ? "read" : "write", fname, host_addr, len);
-
+		if (!len)
+			len = 4096;
 	}
 
-        if (!len) {
-            log_err("Zero length op specified,"
-                    " aborting.\n");
-            rc = -EINVAL;
-            goto done;
-        }
+	if(fname) {
+		bin_fd = open(fname, do_read ? O_RDWR | O_CREAT | O_TRUNC : O_RDONLY, (mode_t)0600);
+		if (bin_fd < 0) {
+			log_err("Failed to open %s.\n", fname);
+			rc = -ENODEV;
+			goto done;
+		}
 
+		if (do_read){
+			if (0 > (rc = lseek(bin_fd, len - 1 , SEEK_SET))) {
+				log_err("Failed[%s] to seek %d on %s\n", strerror(errno), len, fname);
+				goto done;
+			}
+
+			if ((rc = write(bin_fd, "", 1)) != 1) {
+				log_err("Failed[%s] to put char on %s\n", strerror(errno), fname);
+				goto done;
+			}
+		} else {
+			struct stat fbin_stats;
+
+			rc = fstat(bin_fd, &fbin_stats);
+			if (rc) {
+				log_err("fstat failed on %s, %s\n", fname, strerror(errno));
+				goto done;
+			}
+
+			len = fbin_stats.st_size;
+		}
+
+		log_info("Doing %s of %s to/from 0x%llx for size %d\n", do_read ? "read" : "write", fname, host_addr, len);
+	}
+
+	if (!len) {
+		log_err("Zero length op specified, aborting.\n");
+		rc = -EINVAL;
+		goto done;
+	}
 
 	aligned_len = align_length(len);
 
@@ -409,32 +438,50 @@ int main(int argc, char **argv)
 		}
 
 		arg_to_data(data_arg, len, data_buf);
-        } else if(fname) {  // See if we are reading/writing to a file
-            data_buf = mmap(NULL, aligned_len, do_read ? PROT_READ | PROT_WRITE : PROT_READ, MAP_SHARED,
-                           bin_fd, 0);
-            if (!data_buf) {
-                log_err("Failed to mmap %s.\n", strerror(errno));
-                rc = -ENOMEM;
-                goto done;
-            }
+	} else if (fname) {
+		data_buf = mmap(NULL, aligned_len, do_read ? PROT_READ | PROT_WRITE : PROT_READ, MAP_SHARED, bin_fd, 0);
+		if (!data_buf) {
+			log_err("Failed to mmap %s.\n", strerror(errno));
+			rc = -ENOMEM;
+			goto done;
+		}
+	}
 
-        }
-
-
-	vga_mem = mmap(NULL, aligned_len, PROT_READ | PROT_WRITE, MAP_SHARED,
-		       fd, 0);
+	vga_mem = mmap(NULL, aligned_len, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
 	if (!vga_mem) {
 		log_err("Failed to mmap %s.\n", strerror(errno));
 		rc = -ENOMEM;
 		goto done;
 	}
 
-       	if (!do_read) {
-            if(fname){
-                memcpy(vga_mem, data_buf, len);
-            }else if (pattern) {
-		do_pattern(vga_mem, aligned_len, pattern_length / 2, data_buf);
-            }
+comparison_loop:
+	if (corruption) {
+		if (first_corruption_loop) {
+			unsigned int cc = aligned_len / 4;
+
+			len = aligned_len;
+			corruption_buffer = malloc(aligned_len);
+			srand(time(NULL));
+
+			for (unsigned int i = 0; i < cc; ++i)
+				((unsigned int *)corruption_buffer)[i] = (unsigned int)rand();
+
+			memcpy(vga_mem, corruption_buffer, aligned_len);
+
+			corruption_clear = malloc(aligned_len);
+			memset(corruption_clear, 0, aligned_len);
+
+			corruption_compare = malloc(aligned_len);
+		}
+		else {
+			memcpy(vga_mem, corruption_clear, aligned_len);
+		}
+	} else if (!do_read) {
+		if(fname){
+			memcpy(vga_mem, data_buf, len);
+		} else if (pattern) {
+			do_pattern(vga_mem, aligned_len, pattern_length / 2, data_buf);
+		}
 	} else if (clear) {
 		char *tmp = malloc(aligned_len);
 
@@ -463,33 +510,116 @@ int main(int argc, char **argv)
 		goto done;
 	}
 
-        if (do_read) {
-            if(fname){
-                memcpy(data_buf, vga_mem, len);
-                msync(data_buf, len, MS_SYNC);
-            }else {
-		read_and_display(vga_mem, len);
-            }
-        }
+	if (corruption) {
+		if (first_corruption_loop) {
+			first_corruption_loop = 0;
+			do_read = 1;
+		}
+		else {
+			cl++;
+			memcpy(corruption_compare, vga_mem, aligned_len);
+
+			if (memcmp(corruption_buffer, corruption_compare, aligned_len)) {
+				char tmpn[32];
+				char tmpo[32];
+				int fdn;
+				int fdo;
+
+				log_err("Detected corruption on iteration %u.\n", cl - 1);
+
+				for (unsigned int i = 0; i < aligned_len; ++i) {
+					if (corruption_buffer[i] != corruption_compare[i]) {
+						unsigned int p = 0;
+						unsigned int b = (i / 16);
+						unsigned int n;
+
+						b *= 16;
+						if (b >= 16)
+							p = b - 16;
+
+						n = b + 32;
+						if (n > aligned_len)
+							n = b + 16;
+						if (n > aligned_len)
+							n = aligned_len;
+
+						display(corruption_compare, n, p);
+						fprintf(stdout, "\nOriginal:\n");
+						display(corruption_buffer, n, p);
+						break;
+					}
+				}
+
+				strncpy(tmpn, "/tmp/xdmaXXXXXXnew", 31);
+				strncpy(tmpo, "/tmp/xdmaXXXXXXold", 31);
+
+				fdn = mkstemps(tmpn, 3);
+				fdo = mkstemps(tmpo, 3);
+
+				if (fdn >= 0) {
+					log_info("Writing corrupted buffer to %s.\n", tmpn);
+					if (write(fdn, corruption_compare, aligned_len) < 0)
+						log_err("Failed to write corrupted buffer: %s\n", strerror(errno));
+					close(fdn);
+				}
+
+				if (fdo >= 0) {
+					log_info("Writing original buffer to %s.\n", tmpo);
+					if (write(fdo, corruption_buffer, aligned_len) < 0)
+						log_err("Failed to write original buffer: %s\n", strerror(errno));
+					close(fdo);
+				}
+
+				goto done;
+			}
+			else {
+				log_info("Completed %u comparisons.\n", cl);
+			}
+		}
+
+		if (cl < corruption)
+			goto comparison_loop;
+		else
+			goto done;
+	}
+
+	if (do_read) {
+		if (fname) {
+			memcpy(data_buf, vga_mem, len);
+			msync(data_buf, len, MS_SYNC);
+		} else {
+			read_and_display(vga_mem, len);
+		}
+	}
+
 done:
+	if (corruption_buffer)
+		free(corruption_buffer);
+
+	if (corruption_clear)
+		free(corruption_clear);
+
+	if (corruption_compare)
+		free(corruption_compare);
+
 	if (vga_mem)
 		munmap(vga_mem, aligned_len);
 
 	if (fd >= 0)
 		close(fd);
 
-	if (data_buf)
-            if(fname)
-                munmap(data_buf, aligned_len);
-            else    
-		free(data_buf);
+	if (data_buf) {
+		if (fname)
+			munmap(data_buf, aligned_len);
+		else
+			free(data_buf);
+	}
 
 	if (bin_fd >= 0)
 		close(bin_fd);
 
 	if (data_arg)
 		free(data_arg);
-
 
 	return rc;
 }
