@@ -63,11 +63,13 @@ static const char *_help =
 	"Usage: xdma-test [options]\n"
 	"Options:\n"
 	"    -a --addr <host address>    specify the host memory address\n"
+	"    -c                          Clear mapped area prior to operation\n"
 	"    -d --data <data>            specify the data pattern for upstream"
 					 " ops\n"
 	"    -p --pattern                pattern the memory before upstream "
 					 "op\n"
 	"    -f --file                   File to read/write to\n"
+	"    -i --index <index>          Device index value\n"
 	"    -r --read                   do a read (downstream) op of <length>"
 					 " bytes. If the file parameter is "
                                          "specified, will place data in file arg\n"
@@ -235,6 +237,8 @@ int main(int argc, char **argv)
 	char clear = 0;
 	char first_corruption_loop = 0;
 	bool reset = false;
+	bool index_flag = false;
+	bool host_addr_flag = false;
 	int fd = -1;
 	int bin_fd = -1;
 	int option;
@@ -242,20 +246,21 @@ int main(int argc, char **argv)
 	unsigned int pattern_length = DEFAULT_PATTERN_LENGTH;
 	size_t fname_length = 0;
 	uint8_t res;
-	uint64_t host_addr;
+	uint64_t host_addr = 0;
 	uint32_t aligned_len;
 	uint32_t corruption = 0;
 	uint32_t cl = 0;
 	uint32_t len = 0;
+	uint32_t index = 0;
 	uint8_t *data_buf = NULL;
 	uint8_t *vga_mem = NULL;
 	char *data_arg = NULL;
-	const char *xdma_dev = "/dev/aspeed-xdma";
+	char *xdma_dev = NULL;
 	char *fname = NULL;
 	char *corruption_buffer = NULL;
 	char *corruption_clear = NULL;
 	char *corruption_compare = NULL;
-	const char *opts = "a:cd:hf:prwRXs:";
+	const char *opts = "a:cd:hf:prwRX:s:i:";
 	struct aspeed_xdma_op xdma_op;
 	struct pollfd fds;
 	struct option lopts[] = {
@@ -264,6 +269,7 @@ int main(int argc, char **argv)
 		{ "data", 1, 0, 'd' },
 		{ "help", 0, 0, 'h' },
 		{ "file", 1, 0, 'f' },
+		{ "index", 1, 0, 'i' },
 		{ "pattern", 0, 0, 'p' },
 		{ "size", 1, 0, 's' },
 		{ "read", no_argument, 0, 'r' },
@@ -278,6 +284,7 @@ int main(int argc, char **argv)
 		case 'a':
 			if ((rc = arg_to_u64(optarg, &host_addr)))
 				goto done;
+			host_addr_flag = true;
 			break;
 		case 'c':
 			clear = 1;
@@ -312,6 +319,11 @@ int main(int argc, char **argv)
 		case 'h':
 			printf("%s", _help);
 			goto done;
+			break;
+		case 'i':
+			if ((rc = arg_to_u32(optarg, &index)))
+				goto done;
+			index_flag = true;
 			break;
 		case 'p':
 			pattern = 1;
@@ -359,10 +371,27 @@ int main(int argc, char **argv)
 
 	if (!op && !reset) {
 		log_err("No operation specified, aborting.\n");
+		printf("%s", _help);
 		rc = -EINVAL;
 		goto done;
 	}
 
+	if (op && !host_addr_flag) {
+		log_err("No host memory address specified, aborting.\n");
+		rc = -EINVAL;
+		goto done;
+	}
+
+	/* Build device name based on index */
+	xdma_dev = malloc(strlen("/dev/aspeed-xdma") + 10);
+	if (!xdma_dev) {
+		rc = -ENOMEM;
+		goto done;
+	}
+	if (index_flag)
+		sprintf(xdma_dev, "/dev/aspeed-xdma%d", index);
+	else
+		strcpy(xdma_dev, "/dev/aspeed-xdma");
 
 	fd = open(xdma_dev, O_RDWR);
 	if (fd < 0) {
@@ -620,6 +649,9 @@ done:
 
 	if (data_arg)
 		free(data_arg);
+
+	if (xdma_dev)
+		free(xdma_dev);
 
 	return rc;
 }
